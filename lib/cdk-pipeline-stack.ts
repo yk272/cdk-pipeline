@@ -1,18 +1,54 @@
-import * as sns from '@aws-cdk/aws-sns';
-import * as subs from '@aws-cdk/aws-sns-subscriptions';
-import * as sqs from '@aws-cdk/aws-sqs';
-import * as cdk from '@aws-cdk/core';
-
-export class CdkPipelineStack extends cdk.Stack {
-  constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
+import * as codebuild from "@aws-cdk/aws-codebuild";
+import { Artifact, Pipeline } from "@aws-cdk/aws-codepipeline";
+import { SimpleSynthAction } from "@aws-cdk/pipelines";
+import { CodeBuildAction, GitHubSourceAction } from "@aws-cdk/aws-codepipeline-actions";
+import * as cdk from "@aws-cdk/core";
+export class WorkshopPipelineStack extends cdk.Stack {
+  constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
-
-    const queue = new sqs.Queue(this, 'CdkPipelineQueue', {
-      visibilityTimeout: cdk.Duration.seconds(300)
+    const pipeline = new Pipeline(this, "TestPipeline", {
+      pipelineName: "TestPipeline"
+    });
+    const project = new codebuild.PipelineProject(this, "TestPipelineProject");
+    // STAGE 1: SOURCE
+    const sourceOutput = new Artifact();
+    const sourceAction = new GitHubSourceAction({
+      actionName: "GitHub_Source",
+      owner: "tra-mes",
+      repo: "idenversio",
+      oauthToken: cdk.SecretValue.secretsManager("internal/r2d2/token/github"),
+      output: sourceOutput,
+      branch: "qa" // default: 'master'
+    });
+    pipeline.addStage({
+      stageName: "Source",
+      actions: [sourceAction]
     });
 
-    const topic = new sns.Topic(this, 'CdkPipelineTopic');
+    // STAGE 2: BUILD
+    const buildOutput = new Artifact();
+    const buildAction = new CodeBuildAction({
+      actionName: "LernaBuild",
+      input: sourceOutput,
+      project,
+      outputs: [buildOutput]
+    });
 
-    topic.addSubscription(new subs.SqsSubscription(queue));
+    pipeline.addStage({
+      stageName: "Build",
+      actions: [buildAction]
+    });
+
+    // STAGE 3: SYNTH
+    const synthOutput = new Artifact();
+    const synthAction = SimpleSynthAction.standardYarnSynth({
+      sourceArtifact: buildOutput,
+      cloudAssemblyArtifact: synthOutput,
+      subdirectory: "packages/cdk-app"
+    });
+    pipeline.addStage({
+      stageName: "Synth",
+      actions: [synthAction]
+    });
   }
 }
